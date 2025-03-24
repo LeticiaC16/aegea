@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abrindo Arquivo</title>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/service-worker.js')
+                .then(() => console.log("Service Worker registrado"))
+                .catch(error => console.error("Erro ao registrar Service Worker:", error));
+        }
+
+        function obterMatricula() {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get("matricula");
+        }
+
+        function abrirIndexedDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open("OfflineDB", 1);
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains("arquivos")) {
+                        db.createObjectStore("arquivos");
+                    }
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = (error) => reject(error);
+            });
+        }
+
+        function salvarNoIndexedDB(chave, valor) {
+            abrirIndexedDB().then((db) => {
+                const transaction = db.transaction("arquivos", "readwrite");
+                const store = transaction.objectStore("arquivos");
+                store.put(valor, chave);
+            }).catch((error) => console.error("Erro ao salvar no IndexedDB:", error));
+        }
+
+        function recuperarDoIndexedDB(chave) {
+            return new Promise((resolve, reject) => {
+                abrirIndexedDB().then((db) => {
+                    const transaction = db.transaction("arquivos", "readonly");
+                    const store = transaction.objectStore("arquivos");
+                    const request = store.get(chave);
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = (error) => reject(error);
+                });
+            });
+        }
+
+        async function abrirArquivo() {
+            const matricula = obterMatricula();
+            if (!matricula) {
+                document.body.innerHTML = "<h2>Matrícula não informada!</h2>";
+                return;
+            }
+
+            const pdfUrl = `https://uva-beryl.vercel.app/cartao_${matricula}.png`;
+            const txtUrl = `https://uva-beryl.vercel.app/cartao_${matricula}.txt`;
+
+            if (navigator.onLine) {
+                // Redireciona para o PDF
+                window.location.href = pdfUrl;
+
+                // Baixa e armazena o TXT no IndexedDB para acesso offline
+                try {
+                    const response = await fetch(txtUrl);
+                    if (response.ok) {
+                        const texto = await response.text();
+                        salvarNoIndexedDB(`cartao_${matricula}_txt`, texto);
+                        console.log(`TXT salvo no IndexedDB: ${texto}`);
+                    } else {
+                        console.error("Erro ao baixar o TXT.");
+                    }
+                } catch (error) {
+                    console.error("Erro ao armazenar o TXT:", error);
+                }
+            } else {
+                // Se estiver offline, tenta carregar o TXT salvo no IndexedDB
+                recuperarDoIndexedDB(`cartao_${matricula}_txt`).then((textoOffline) => {
+                    if (textoOffline) {
+                        document.body.innerHTML = `
+                            <h2>Você está offline</h2>
+                            <p><strong>Conteúdo salvo para a matrícula ${matricula}:</strong></p>
+                            <pre>${textoOffline}</pre>
+                        `;
+                    } else {
+                        document.body.innerHTML = `
+                            <h2>Você está offline</h2>
+                            <p><strong>Arquivo offline não encontrado para a matrícula ${matricula}.</strong></p>
+                            <p>Por favor, tente novamente quando estiver online.</p>
+                        `;
+                    }
+                }).catch(() => {
+                    document.body.innerHTML = `
+                        <h2>Erro ao recuperar o arquivo offline.</h2>
+                        <p>Tente novamente quando estiver online.</p>
+                    `;
+                });
+            }
+        }
+
+        window.onload = abrirArquivo;
+    </script>
+</head>
+<body>
+    <h2>Verificando conexão...</h2>
+</body>
+</html>
